@@ -1,19 +1,16 @@
-import { IsString, IsNotEmpty, IsArray, IsNumber, IsOptional, ValidateNested, IsObject, Min, Max } from 'class-validator';
+import { IsString, IsEmail, IsNumber, IsArray, IsOptional, Min, Max, ValidateNested, IsObject } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class BuyerDto {
-  @IsString()
-  @IsNotEmpty()
+  @IsEmail()
   email: string;
 
   @IsString()
-  @IsNotEmpty()
   name: string;
 }
 
 export class OrderItemDto {
   @IsString()
-  @IsNotEmpty()
   sku: string;
 
   @IsNumber()
@@ -21,36 +18,28 @@ export class OrderItemDto {
   qty: number;
 
   @IsNumber()
-  @Min(0)
+  @Min(0.01)
   price: number;
 }
 
 export class AttachmentDto {
   @IsString()
-  @IsNotEmpty()
   filename: string;
 
   @IsString()
-  @IsNotEmpty()
   contentType: string;
 
   @IsNumber()
   @Min(1)
-  @Max(10 * 1024 * 1024) // 10MB max
+  @Max(10 * 1024 * 1024)
   size: number;
-
-  @IsString()
-  @IsNotEmpty()
-  storageKey: string;
 }
 
 export class CreateOrderDto {
   @IsString()
-  @IsNotEmpty()
   requestId: string;
 
   @IsString()
-  @IsNotEmpty()
   tenantId: string;
 
   @IsObject()

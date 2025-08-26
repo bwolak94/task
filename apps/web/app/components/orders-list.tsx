@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 interface Order {
@@ -22,53 +22,48 @@ interface OrdersResponse {
   total: number;
 }
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001';
+
 export default function OrdersList() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
   const [filters, setFilters] = useState({
     tenantId: 't-123',
     status: '',
     buyerEmail: '',
-    from: '',
-    to: '',
     page: 1,
     limit: 10,
   });
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 10,
-    total: 0,
-  });
-
-  const [socket, setSocket] = useState<Socket | null>(null);
 
   useEffect(() => {
-    // Initialize WebSocket connection
-    const newSocket = io('http://localhost:3001', {
+    const newSocket = io(WS_URL, {
       auth: {
-        token: 'mock-jwt-token', // In real app, this would be a proper JWT
+        token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0ZW5hbnRJZCI6InQtMTIzIiwiaWF0IjoxNzU2MjM1OTYzLCJleHAiOjE3NTYyMzk1NjN9.mock-signature',
       },
     });
 
     newSocket.on('connect', () => {
-      console.log('WebSocket connected');
-      newSocket.emit('join', { tenantId: filters.tenantId });
+      console.log('Connected to WebSocket');
+      newSocket.emit('join', { tenantId: 't-123' });
     });
 
-    newSocket.on('order.updated', (data: { orderId: string; status: string }) => {
-      console.log('Order status updated:', data);
-      setOrders(prevOrders =>
-        prevOrders.map(order =>
-          order.orderId === data.orderId
-            ? { ...order, status: data.status }
+    newSocket.on('connect_error', (error) => {
+      console.log('WebSocket connection error:', error);
+    });
+
+    newSocket.on('order.updated', (data) => {
+      console.log('Order updated:', data);
+      setOrders((prevOrders) =>
+        prevOrders.map((order) =>
+          order.orderId === data.payload.orderId
+            ? { ...order, status: data.payload.status }
             : order
         )
       );
-    });
-
-    newSocket.on('disconnect', () => {
-      console.log('WebSocket disconnected');
     });
 
     setSocket(newSocket);
@@ -76,39 +71,37 @@ export default function OrdersList() {
     return () => {
       newSocket.close();
     };
-  }, [filters.tenantId]);
+  }, []);
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (isRefresh = false) => {
     try {
-      setLoading(true);
-      const queryParams = new URLSearchParams({
-        tenantId: filters.tenantId,
-        page: filters.page.toString(),
-        limit: filters.limit.toString(),
-      });
-
-      if (filters.status) queryParams.append('status', filters.status);
-      if (filters.buyerEmail) queryParams.append('buyerEmail', filters.buyerEmail);
-      if (filters.from) queryParams.append('from', filters.from);
-      if (filters.to) queryParams.append('to', filters.to);
-
-      const response = await fetch(`/api/orders?${queryParams}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch orders');
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
       }
-
-      const data: OrdersResponse = await response.json();
-      setOrders(data.items);
-      setPagination({
-        page: data.page,
-        limit: data.limit,
-        total: data.total,
+      
+      const queryParams = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) queryParams.append(key, value.toString());
       });
+
+      console.log('Fetching orders from:', `${API_BASE_URL}/api/orders?${queryParams}`);
+      
+      const response = await fetch(`${API_BASE_URL}/api/orders?${queryParams}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data: OrdersResponse = await response.json();
+      console.log('Orders fetched:', data);
+      setOrders(data.items);
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      console.error('Error fetching orders:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch orders');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -117,199 +110,154 @@ export default function OrdersList() {
   }, [filters]);
 
   const handleFilterChange = (key: string, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value, page: 1 }));
+    setFilters((prev) => ({ ...prev, [key]: value, page: 1 }));
   };
 
-  const handlePageChange = (newPage: number) => {
-    setFilters(prev => ({ ...prev, page: newPage }));
+  const handleRefresh = () => {
+    fetchOrders(true);
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'PENDING':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'PAID':
-        return 'bg-green-100 text-green-800';
-      case 'CANCELLED':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  if (loading && orders.length === 0) {
-    return (
-      <div className="text-center py-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-        <p className="mt-2 text-gray-600">Ładowanie zamówień...</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="text-center py-8">
-        <p className="text-red-600">Błąd: {error}</p>
-        <button
-          onClick={fetchOrders}
-          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-        >
-          Spróbuj ponownie
-        </button>
-      </div>
-    );
-  }
+  if (loading) return <div className="text-center py-8">Loading orders...</div>;
+  if (error) return <div className="text-red-500 text-center py-8">Error: {error}</div>;
 
   return (
     <div className="space-y-6">
-      {/* Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Status
-          </label>
+      <div className="bg-white p-6 rounded-lg shadow-md">
+        <h2 className="text-2xl font-bold mb-4">Orders List</h2>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <input
+            type="text"
+            placeholder="Tenant ID"
+            value={filters.tenantId}
+            onChange={(e) => handleFilterChange('tenantId', e.target.value)}
+            className="border rounded px-3 py-2"
+          />
           <select
             value={filters.status}
             onChange={(e) => handleFilterChange('status', e.target.value)}
-            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            className="border rounded px-3 py-2"
           >
-            <option value="">Wszystkie</option>
-            <option value="PENDING">Oczekujące</option>
-            <option value="PAID">Opłacone</option>
-            <option value="CANCELLED">Anulowane</option>
+            <option value="">All Statuses</option>
+            <option value="PENDING">PENDING</option>
+            <option value="PAID">PAID</option>
+            <option value="CANCELLED">CANCELLED</option>
           </select>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Email kupującego
-          </label>
           <input
             type="email"
+            placeholder="Buyer Email"
             value={filters.buyerEmail}
             onChange={(e) => handleFilterChange('buyerEmail', e.target.value)}
-            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            placeholder="alice@example.com"
+            className="border rounded px-3 py-2"
           />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Od
-          </label>
           <input
-            type="date"
-            value={filters.from}
-            onChange={(e) => handleFilterChange('from', e.target.value)}
-            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            type="number"
+            placeholder="Page"
+            value={filters.page}
+            onChange={(e) => handleFilterChange('page', e.target.value)}
+            className="border rounded px-3 py-2"
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Do
-          </label>
-          <input
-            type="date"
-            value={filters.to}
-            onChange={(e) => handleFilterChange('to', e.target.value)}
-            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-          />
+        <div className="mb-4 flex items-center gap-4">
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {refreshing ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                Refreshing...
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh Orders
+              </>
+            )}
+          </button>
+          
+          {refreshing && (
+            <span className="text-sm text-gray-500">Updating orders list...</span>
+          )}
         </div>
-      </div>
 
-      {/* Orders Table */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                ID Zamówienia
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Email kupującego
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Kwota
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Data utworzenia
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Załącznik
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {orders.map((order) => (
-              <tr key={order.orderId} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                  {order.orderId}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(order.status)}`}>
-                    {order.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {order.buyerEmail}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {order.total.toFixed(2)} zł
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {new Date(order.createdAt).toLocaleDateString('pl-PL')}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {order.attachment ? (
-                    <span className="text-blue-600 hover:text-blue-800 cursor-pointer">
-                      {order.attachment.filename}
-                    </span>
-                  ) : (
-                    <span className="text-gray-400">Brak</span>
-                  )}
-                </td>
+        <div className="overflow-x-auto">
+          <table className="min-w-full bg-white">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Order ID
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Buyer Email
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Total
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Created
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Attachment
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {orders.map((order) => (
+                <tr key={order.orderId} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                    {order.orderId}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      order.status === 'PAID' ? 'bg-green-100 text-green-800' :
+                      order.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {order.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {order.buyerEmail}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    ${order.total.toFixed(2)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {new Date(order.createdAt).toLocaleDateString()}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {order.attachment ? (
+                      <span className="text-blue-600 hover:text-blue-800 cursor-pointer">
+                        {order.attachment.filename}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">No attachment</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {orders.length === 0 && (
+          <div className="text-center py-8 text-gray-500">
+            No orders found. Create your first order above!
+          </div>
+        )}
+
+        <div className="mt-4 text-sm text-gray-500">
+          Total orders: {orders.length}
+        </div>
       </div>
-
-      {/* Pagination */}
-      {pagination.total > 0 && (
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-gray-700">
-            Pokazano {((pagination.page - 1) * pagination.limit) + 1} do{' '}
-            {Math.min(pagination.page * pagination.limit, pagination.total)} z{' '}
-            {pagination.total} wyników
-          </div>
-          <div className="flex space-x-2">
-            <button
-              onClick={() => handlePageChange(pagination.page - 1)}
-              disabled={pagination.page === 1}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Poprzednia
-            </button>
-            <button
-              onClick={() => handlePageChange(pagination.page + 1)}
-              disabled={pagination.page * pagination.limit >= pagination.total}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Następna
-            </button>
-          </div>
-        </div>
-      )}
-
-      {orders.length === 0 && !loading && (
-        <div className="text-center py-8">
-          <p className="text-gray-500">Brak zamówień do wyświetlenia</p>
-        </div>
-      )}
     </div>
   );
 }

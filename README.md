@@ -1,174 +1,363 @@
-# Mini-moduł "Zamówienia" - CQRS + Projekcje + Realtime
+# Orders Module - CQRS + Projections + Realtime
 
-Implementacja mini-modułu zamówień z architekturą CQRS, projekcjami i powiadomieniami w czasie rzeczywistym.
+Mini-moduł "Zamówienia" z architekturą CQRS + projekcje + realtime.
 
 ## Architektura
 
-- **Backend**: NestJS z MongoDB, WebSocket Gateway
-- **Frontend**: Next.js 14+ (App Router), Server Actions
-- **Baza danych**: MongoDB z indeksami dla filtrów
-- **Realtime**: WebSocket przez NestJS Gateway
-- **Pliki**: Pre-signed URL (S3/MinIO lub mock)
+- **Backend**: NestJS (Node 18+) z CQRS
+- **Frontend**: Next.js 14+ (App Router, SSR/Server Actions)
+- **Baza danych**: MongoDB z Mongoose
+- **Realtime**: WebSocket (Nest Gateway)
+- **Pliki**: S3/MinIO pre-signed URLs
 - **Cache**: Redis (opcjonalnie)
 
 ## Struktura projektu
 
 ```
-/apps
-  /api          # NestJS backend (CQRS, projekcje, WS)
-  /web          # Next.js frontend (SSR, formularze, WS client)
-/infra          # Docker Compose (MongoDB, MinIO, Redis)
+/
+├── apps/
+│   ├── api/          # NestJS backend
+│   └── web/          # Next.js frontend
+├── infra/            # Docker infrastructure
+└── README.md
 ```
 
 ## Wymagania
 
 - Node.js 18+
 - Docker & Docker Compose
-- npm lub yarn
+- MongoDB
+- MinIO (S3-compatible)
 
-## Instalacja i uruchomienie
+## Instalacja
 
-### 1. Instalacja zależności
+### 1. Klonowanie i instalacja zależności
 
 ```bash
+git clone <repo-url>
+cd task
 npm install
 ```
 
-### 2. Uruchomienie infrastruktury
+### 2. Konfiguracja środowiska
+
+Skopiuj plik `.env.example` do `.env` i dostosuj wartości:
+
+```bash
+cp .env.example .env
+```
+
+Główne zmienne środowiskowe:
+
+```bash
+# API Configuration
+API_PORT=3001
+WEB_PORT=3002
+
+# Database
+MONGODB_URI=mongodb://admin:admin123@localhost:27017/orders?authSource=admin
+
+# JWT
+JWT_SECRET=your-super-secret-jwt-key-here
+
+# Frontend API URLs
+NEXT_PUBLIC_API_URL=http://localhost:3001
+NEXT_PUBLIC_WS_URL=ws://localhost:3001
+```
+
+### 3. Uruchomienie infrastruktury
 
 ```bash
 npm run docker:up
 ```
 
-To uruchomi:
-- MongoDB na porcie 27017
-- MinIO na porcie 9000 (S3-compatible)
-- Redis na porcie 6379
-
-### 3. Uruchomienie aplikacji
+### 4. Uruchomienie aplikacji
 
 ```bash
-# Uruchomienie backendu i frontendu
+# Development (oba serwisy)
 npm run dev
 
 # Lub osobno:
 npm run dev:api    # Backend na porcie 3001
-npm run dev:web    # Frontend na porcie 3000
+npm run dev:web    # Frontend na porcie 3002
 ```
+
+## Komendy
+
+```bash
+# Development
+npm run dev              # Uruchamia oba serwisy
+npm run dev:api          # Tylko backend
+npm run dev:web          # Tylko frontend
+
+# Build
+npm run build            # Build obu aplikacji
+npm run build:api        # Build backendu
+npm run build:web        # Build frontendu
+
+# Production
+npm run start            # Uruchamia oba serwisy w trybie produkcyjnym
+npm run start:api        # Backend w trybie produkcyjnym
+npm run start:web        # Frontend w trybie produkcyjnym
+
+# Docker
+npm run docker:up        # Uruchamia infrastrukturę
+npm run docker:down      # Zatrzymuje infrastrukturę
+
+# Testy i linting
+npm run test             # Uruchamia testy
+npm run lint             # Uruchamia linting
+```
+
+## Porty
+
+- **API Backend**: 3001
+- **Web Frontend**: 3002
+- **MongoDB**: 27017
+- **MinIO**: 9000 (API), 9001 (Console)
+- **Redis**: 6380
 
 ## API Endpoints
 
-### Tworzenie zamówienia
+### 1. Create Order (Command)
+
 ```bash
-curl -X POST http://localhost:3001/api/orders \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "requestId": "r1",
-    "tenantId": "t-123",
-    "buyer": {
-      "email": "alice@example.com",
-      "name": "Alice"
-    },
-    "items": [
-      {
-        "sku": "SKU-1",
-        "qty": 2,
-        "price": 49.99
-      }
-    ],
-    "attachment": {
-      "filename": "invoice.pdf",
-      "contentType": "application/pdf",
-      "size": 123456,
-      "storageKey": "tenants/t-123/orders/001/invoice.pdf"
+POST /api/orders
+Content-Type: application/json
+
+{
+  "requestId": "r1",
+  "tenantId": "t-123",
+  "buyer": {
+    "email": "alice@example.com",
+    "name": "Alice"
+  },
+  "items": [
+    {
+      "sku": "SKU-1",
+      "qty": 2,
+      "price": 49.99
     }
-  }'
-```
-
-### Lista zamówień z filtrami
-```bash
-curl 'http://localhost:3001/api/orders?tenantId=t-123&status=PENDING&buyerEmail=alice@example.com&page=1&limit=10'
-```
-
-### Pre-signed URL dla uploadu
-```bash
-curl -X POST http://localhost:3001/api/uploads/presign \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "tenantId": "t-123",
+  ],
+  "attachment": {
     "filename": "invoice.pdf",
     "contentType": "application/pdf",
     "size": 123456
-  }'
+  }
+}
+```
+
+**Wymagania:**
+- Idempotencja po (tenantId, requestId)
+- Walidacja pól
+- Limit rozmiaru pliku (10MB)
+- Zapisz write model + wyemituj OrderCreated event
+
+**Response (201):**
+```json
+{
+  "orderId": "ord_abc123"
+}
+```
+
+### 2. List Orders (Query / projekcja)
+
+```bash
+GET /api/orders?status=PENDING&buyerEmail=alice@example.com&page=1&limit=10
+```
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "orderId": "ord_abc123",
+      "status": "PENDING",
+      "createdAt": "2025-08-22T09:00:00Z",
+      "buyerEmail": "alice@example.com",
+      "total": 99.98,
+      "attachment": {
+        "filename": "invoice.pdf",
+        "storageKey": "tenants/t-123/orders/001/invoice.pdf"
+      }
+    }
+  ],
+  "page": 1,
+  "limit": 10,
+  "total": 1
+}
+```
+
+### 3. Presign Upload
+
+```bash
+POST /api/uploads/presign
+Content-Type: application/json
+
+{
+  "tenantId": "t-123",
+  "filename": "invoice.pdf",
+  "contentType": "application/pdf",
+  "size": 123456
+}
+```
+
+**Response:**
+```json
+{
+  "url": "https://minio.local/...signed...",
+  "storageKey": "tenants/t-123/orders/001/invoice.pdf",
+  "expiresInSeconds": 120,
+  "headers": {
+    "Content-Type": "application/pdf"
+  }
+}
 ```
 
 ## Funkcjonalności
 
-### 1. Idempotencja
-- Zamówienia są idempotentne po `(tenantId, requestId)`
-- Drugi identyczny request zwraca ten sam `orderId` lub 409
+### Idempotencja
+- Unikalny indeks na (tenantId, requestId)
+- Drugi call z tym samym requestId zwraca ten sam orderId
+- Brak duplikatów
 
-### 2. Projekcje
-- Read model w osobnej kolekcji `orders_read`
-- Indeksy na `(tenantId, status, createdAt)`, `(tenantId, buyer.email)`
-- Filtry: status, buyerEmail, zakres dat, paginacja
+### Projekcje
+- Osobna kolekcja `orders_read` dla listy
+- Denormalizacja pod szybkie zapytania
+- Aktualizacja przez event handlers
 
-### 3. Realtime
-- WebSocket po autoryzacji JWT
+### Realtime
+- WebSocket połączenie z autoryzacją JWT
 - Event `order.updated` po zmianie statusu
-- Symulacja zmiany statusu z PENDING na PAID w 2-5s
+- Automatyczna aktualizacja UI bez reloadu
 
-### 4. Upload plików
-- Pre-signed URL z TTL 120s
-- PUT bezpośrednio do S3/MinIO
+### Upload
+- Pre-signed URL z S3/MinIO
 - Walidacja typu i rozmiaru pliku
+- Bezpośredni upload do storage (bez proxy)
 
-## Kompromisy i uproszczenia
+## Indeksy MongoDB
 
+```javascript
+// Write model (idempotencja)
+db.orders.createIndex({ "tenantId": 1, "requestId": 1 }, { unique: true })
+
+// Read model (filtry)
+db.orders_read.createIndex({ "tenantId": 1, "status": 1, "createdCQRS + Projekcje + Realtime
 ### Event Bus
-- In-memory publish/subscribe zamiast Kafki
-- setTimeout do symulacji zmian statusu
-- Interfejs przygotowany na łatwą migrację do prawdziwego brokera
+- In-memory event bus zamiast Kafki
+- setTimeout(2-5s) do symulacji status change
+- Łatwe zastąpienie prawdziwym brokerem
 
 ### S3/MinIO
-- Mock presign URL jeśli brak Docker
-- Lokalny endpoint przyjmujący PUT
-- Walidacje i TTL zachowane
+- Mock presign URL (lokalny endpoint)
+- Brak prawdziwego uploadu plików
+- Zachowanie flow i walidacji
 
-### Autoryzacja
-- Uproszczony JWT bez rejestracji
+### Auth
+- Uproszczony JWT
 - Stały użytkownik i tenantId
-- HTTP-only cookie dla WebSocket
+- Brak rejestracji/logowania
 
-## Co bym zrobił w v2
+## v2 - Co bym zrobił następnym razem
 
-1. **Event Sourcing**: Pełna historia zmian zamówień
-2. **Saga Pattern**: Obsługa transakcji rozproszonych
-3. **CQRS Read Models**: Więcej projekcji dla różnych widoków
-4. **Rate Limiting**: API throttling i quota management
-5. **Audit Log**: Pełne logowanie operacji
-6. **Testing**: E2E testy z TestContainers
-7. **Monitoring**: Metryki, health checks, distributed tracing
-8. **Security**: RBAC, API keys, rate limiting per tenant
+1. **Event Bus**: Kafka/RabbitMQ zamiast in-memory
+2. **S3**: Prawdziwe pre-signed URLs z MinIO
+3. **Auth**: Pełna autentykacja z Supabase Auth
+4. **Cache**: Redis cache dla listy zamówień
+5. **Monitoring**: Prometheus + Grafana
+6. **Logging**: Structured logging z Winston
+7. **Testing**: E2E testy z Playwright
+8. **CI/CD**: GitHub Actions z deployment
+9. **Documentation**: OpenAPI/Swagger
+10. **Error Handling**: Global error handling z custom error types
 
-## Porty
+## Testowanie
 
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:3001
-- **MongoDB**: localhost:27017
-- **MinIO**: http://localhost:9000 (admin/admin123)
-- **Redis**: localhost:6379
+### Akceptacja (curl)
 
-## Development
+1. **Idempotencja**
+```bash
+# Pierwszy call
+curl -s -XPOST http://localhost:3001/api/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"requestId":"r1","tenantId":"t-123","buyer":{"email":"alice@example.com","name":"Alice"},"items":[{"sku":"SKU-1","qty":2,"price":49.99}],"attachment":{"filename":"invoice.pdf","contentType":"application/pdf","size":123456}}'
+
+# Drugi call z tym samym requestId - powinien zwrócić ten sam orderId
+curl -s -XPOST http://localhost:3001/api/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"requestId":"r1","tenantId":"t-123","buyer":{"email":"alice@example.com","name":"Alice"},"items":[{"sku":"SKU-1","qty":2,"price":49.99}],"attachment":{"filename":"invoice.pdf","contentType":"application/pdf","size":123456}}'
+```
+
+2. **Lista + filtry**
+```bash
+curl -s 'http://localhost:3001/api/orders?tenantId=t-123&status=PENDING&buyerEmail=alice@example.com&page=1&limit=10'
+```
+
+3. **Presign**
+```bash
+curl -s -XPOST http://localhost:3001/api/uploads/presign \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":"t-123","filename":"test.pdf","contentType":"application/pdf","size":123456}'
+```
+
+## Git Flow
 
 ```bash
-# Nowa funkcjonalność
-git flow feature start feature-name
+# Inicjalizacja
+git flow init
 
-# Zakończenie feature
+# Feature branch
+git flow feature start feature-name
 git flow feature finish feature-name
 
 # Release
 git flow release start 1.0.0
 git flow release finish 1.0.0
+
+# Hotfix
+git flow hotfix start hotfix-name
+git flow hotfix finish hotfix-name
+```
+
+## Rozwój
+
+1. **Feature branch**: `git flow feature start feature-name`
+2. **Development**: Implementacja funkcjonalności
+3. **Testing**: Testy lokalne
+4. **Finish feature**: `git flow feature finish feature-name`
+5. **Release**: `git flow release start 1.0.0`
+6. **Production**: `git flow release finish 1.0.0`
+
+## Troubleshooting
+
+### Port conflicts
+```bash
+# Sprawdź zajęte porty
+lsof -i :3001
+lsof -i :3002
+
+# Zatrzymaj procesy
+pkill -f "nest start"
+pkill -f "npm run dev"
+```
+
+### Docker issues
+```bash
+# Restart Docker
+docker-compose down
+docker-compose up -d
+
+# Sprawdź logi
+docker-compose logs mongodb
+docker-compose logs minio
+```
+
+### API not starting
+```bash
+# Sprawdź logi
+cd apps/api && npm run start:dev
+
+# Sprawdź połączenie z MongoDB
+curl http://localhost:27017
 ```

@@ -17,7 +17,6 @@ export class CreateOrderCommand implements ICommand {
       filename: string;
       contentType: string;
       size: number;
-      storageKey: string;
     },
   ) {}
 }

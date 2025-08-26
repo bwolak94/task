@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNumber, IsDateString, Min, Max } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber, IsDateString, Min, Max } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class OrderQueryDto {

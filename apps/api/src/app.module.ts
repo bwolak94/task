@@ -5,6 +5,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { OrdersModule } from './orders/orders.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { WebsocketModule } from './websocket/websocket.module';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
@@ -18,5 +19,6 @@ import { WebsocketModule } from './websocket/websocket.module';
     UploadsModule,
     WebsocketModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}

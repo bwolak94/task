@@ -1,41 +1,46 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
+@Schema({ _id: false })
+export class AttachmentRead {
+  @Prop({ required: true, type: String })
+  filename: string;
+
+  @Prop({ required: true, type: String })
+  storageKey: string;
+}
+
 export type OrderReadDocument = OrderRead & Document;
 
 @Schema({ timestamps: true })
 export class OrderRead {
-  @Prop({ required: true, unique: true })
+  @Prop({ required: true, unique: true, type: String })
   orderId: string;
 
-  @Prop({ required: true })
+  @Prop({ required: true, type: String })
   tenantId: string;
 
-  @Prop({ required: true })
+  @Prop({ required: true, type: String })
   buyerEmail: string;
 
-  @Prop({ required: true, default: 'PENDING' })
-  status: 'PENDING' | 'PAID' | 'CANCELLED';
+  @Prop({ required: true, enum: ['PENDING', 'PAID', 'CANCELLED'], default: 'PENDING', type: String })
+  status: string;
 
-  @Prop({ required: true })
+  @Prop({ required: true, type: Number, min: 0 })
   total: number;
 
-  @Prop({ type: Object })
-  attachment?: {
-    filename: string;
-    storageKey: string;
-  };
+  @Prop({ type: AttachmentRead })
+  attachment?: AttachmentRead;
 
-  @Prop({ type: Date, default: Date.now })
-  createdAt: Date;
+  @Prop({ type: Date })
+  createdAt?: Date;
 
-  @Prop({ type: Date, default: Date.now })
-  updatedAt: Date;
+  @Prop({ type: Date })
+  updatedAt?: Date;
 }
 
 export const OrderReadSchema = SchemaFactory.createForClass(OrderRead);
 
-// Indexes for filtering and pagination
 OrderReadSchema.index({ tenantId: 1, status: 1, createdAt: -1 });
 OrderReadSchema.index({ tenantId: 1, buyerEmail: 1 });
 OrderReadSchema.index({ tenantId: 1, createdAt: -1 });

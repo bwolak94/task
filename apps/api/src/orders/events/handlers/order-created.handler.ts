@@ -3,37 +3,38 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { OrderCreatedEvent } from '../order-created.event';
 import { OrderRead, OrderReadDocument } from '../../schemas/order-read.schema';
+import { OrderStatusChangedEvent } from '../order-status-changed.event';
+import { EventBus } from '@nestjs/cqrs';
 
 @EventsHandler(OrderCreatedEvent)
 export class OrderCreatedHandler implements IEventHandler<OrderCreatedEvent> {
   constructor(
     @InjectModel(OrderRead.name) private orderReadModel: Model<OrderReadDocument>,
+    private eventBus: EventBus,
   ) {}
 
   async handle(event: OrderCreatedEvent) {
-    const { orderId, tenantId, payload } = event;
+    const { orderId, tenantId, buyer, items, attachment, total } = event;
 
-    // Create read model (projection)
     const orderRead = new this.orderReadModel({
       orderId,
       tenantId,
-      buyerEmail: payload.buyer.email,
+      buyerEmail: buyer.email,
       status: 'PENDING',
-      total: payload.total,
-      attachment: payload.attachment ? {
-        filename: payload.attachment.filename,
-        storageKey: payload.attachment.storageKey,
+      total,
+      attachment: attachment ? {
+        filename: attachment.filename,
+        storageKey: `tenants/${tenantId}/orders/${orderId}/${attachment.filename}`,
       } : undefined,
     });
 
     await orderRead.save();
 
-    // Simulate status change after 2-5 seconds
-    setTimeout(async () => {
-      await this.orderReadModel.updateOne(
-        { orderId },
-        { status: 'PAID' }
-      );
+    setTimeout(() => {
+      this.eventBus.publish(new OrderStatusChangedEvent(orderId, tenantId, {
+        status: 'PAID',
+        previousStatus: 'PENDING',
+      }));
     }, 2000 + Math.random() * 3000);
   }
 }
