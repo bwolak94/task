@@ -24,9 +24,7 @@ export default function RootLayout({
                 <h1 className="text-2xl font-bold text-gray-900">
                   Orders Module
                 </h1>
-                <div className="text-sm text-gray-500">
-                  CQRS + Projekcje + Realtime
-                </div>
+             
               </div>
             </div>
           </header>

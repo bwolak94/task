@@ -1,11 +1,9 @@
 import { CommandHandler, ICommandHandler, EventBus } from '@nestjs/cqrs';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { v4 as uuidv4 } from 'uuid';
 import { CreateOrderCommand } from '../create-order.command';
 import { Order, OrderDocument } from '../../schemas/order.schema';
 import { OrderCreatedEvent } from '../../events/order-created.event';
-import { ConflictException } from '@nestjs/common';
 
 @CommandHandler(CreateOrderCommand)
 export class CreateOrderHandler implements ICommandHandler<CreateOrderCommand> {
@@ -17,7 +15,6 @@ export class CreateOrderHandler implements ICommandHandler<CreateOrderCommand> {
   async execute(command: CreateOrderCommand): Promise<{ orderId: string }> {
     const { requestId, tenantId, buyer, items, attachment } = command;
 
-    // Check for existing order (idempotency)
     const existingOrder = await this.orderModel.findOne({
       tenantId,
       requestId,
@@ -27,34 +24,31 @@ export class CreateOrderHandler implements ICommandHandler<CreateOrderCommand> {
       return { orderId: existingOrder.orderId };
     }
 
-    // Calculate total
     const total = items.reduce((sum, item) => sum + item.qty * item.price, 0);
+    const orderId = `ord_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Create new order
-    const orderId = `ord_${uuidv4().replace(/-/g, '').substring(0, 8)}`;
-    
-    const order = new this.orderModel({
+    const orderData: any = {
       orderId,
       requestId,
       tenantId,
       buyer,
       items,
-      attachment,
-      total,
       status: 'PENDING',
-    });
+      total,
+    };
 
+    if (attachment) {
+      const storageKey = `tenants/${tenantId}/orders/${orderId}/${attachment.filename}`;
+      orderData.attachment = {
+        ...attachment,
+        storageKey,
+      };
+    }
+
+    const order = new this.orderModel(orderData);
     await order.save();
 
-    // Emit event
-    this.eventBus.publish(
-      new OrderCreatedEvent(orderId, tenantId, {
-        buyer,
-        items,
-        total,
-        attachment,
-      }),
-    );
+    this.eventBus.publish(new OrderCreatedEvent(orderId, tenantId, buyer, items, total, attachment));
 
     return { orderId };
   }
